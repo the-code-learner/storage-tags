@@ -1,0 +1,14 @@
+services:
+  rfid-app:
+    build: .
+    container_name: storage-tags
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: /data/inventory.sqlite
+      RFID_INPUT_MODE: browser
+      APP_BASE_URL: http://localhost:3000
+    volumes:
+      - ./data:/data
