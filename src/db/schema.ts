@@ -1,3 +1,4 @@
+export const schemaSql = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 
@@ -68,3 +69,4 @@ CREATE TABLE IF NOT EXISTS inventory_reads (
 CREATE INDEX IF NOT EXISTS idx_items_name ON items(name);
 CREATE INDEX IF NOT EXISTS idx_items_sku ON items(sku);
 CREATE INDEX IF NOT EXISTS idx_inventory_reads_session ON inventory_reads(session_id);
+`;

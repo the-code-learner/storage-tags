@@ -9,6 +9,10 @@ Storage Tags is a local browser-based UHF RFID inventory system. It is designed 
 - Accepts browser HID keyboard RFID input as the first MVP reader mode.
 - Deduplicates repeated reads per inventory session.
 - Shows known items, unknown tags, read counts, and confidence labels.
+- Lets operators register unknown tags, mark them as external, or ignore them.
+- Saves browser station settings for RFID input devices.
+- Creates local SQLite backups.
+- Loads demo data for testing without a physical RFID reader.
 - Exports saved session results as CSV.
 
 ## Architecture
@@ -95,11 +99,13 @@ SQLite data is stored in the local `data/` directory through the Docker volume m
 
 ## Main Pages
 
+- `Dashboard`: review inventory activity, open sessions, and unknown tags.
 - `Inventory`: start and stop container inventory sessions.
 - `Register Tag`: scan an EPC and associate it with a new item.
-- `Items`: review created inventory items.
+- `Items`: create, edit, and archive inventory items.
 - `Sessions`: reopen saved inventory sessions.
-- `Reader`: test HID keyboard input and inspect the raw scan buffer.
+- `Reader`: test HID keyboard input, inspect raw input, and save station settings.
+- `Reports`: review unknown tags and item last-seen data.
 
 ## RFID Reader Usage
 
@@ -117,15 +123,62 @@ For Android devices, the reader must be supported as USB OTG, Bluetooth HID, or 
 - `GET /api/health`
 - `GET /api/items`
 - `POST /api/items`
+- `GET /api/items/:id`
+- `PUT /api/items/:id`
+- `DELETE /api/items/:id`
+- `GET /api/tags`
 - `GET /api/tags/:epc`
 - `POST /api/tags/register`
+- `PUT /api/tags/:epc/status`
+- `POST /api/tags/mark-unknown`
 - `POST /api/rfid/browser-read`
 - `POST /api/rfid/batch-browser-read`
 - `GET /api/inventory-sessions`
 - `POST /api/inventory-sessions`
 - `GET /api/inventory-sessions/:sessionKey`
 - `POST /api/inventory-sessions/:sessionKey/close`
+- `GET /api/stations`
+- `POST /api/stations`
+- `GET /api/stations/:stationKey`
+- `PUT /api/stations/:stationKey`
+- `GET /api/reports/unknown-tags`
+- `GET /api/reports/items-last-seen`
 - `GET /api/reports/session/:sessionKey/csv`
+- `POST /api/admin/backup`
+- `POST /api/admin/seed-demo`
+
+## Testing Without A Reader
+
+1. Start the app.
+2. Click `Load Demo Data`.
+3. Open `Inventory`.
+4. Start a session.
+5. Use the demo scan buttons to simulate known and unknown RFID reads.
+6. Open `Reports` to review unknown tags and last-seen item data.
+
+The demo EPC values are:
+
+```text
+3034257BF7194E4000001A85
+3034257BF7194E4000001A86
+E2806894000040178F2A91B5
+```
+
+## Backups
+
+Click `Create Backup` in the sidebar or call:
+
+```bash
+curl -X POST http://localhost:3000/api/admin/backup \
+  -H "Content-Type: application/json" \
+  -d "{}"
+```
+
+Backups are written under:
+
+```text
+data/backups/
+```
 
 ## Local Development Notes
 

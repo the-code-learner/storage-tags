@@ -10,6 +10,8 @@ export type CreateItemInput = {
   notes?: string;
 };
 
+export type UpdateItemInput = Partial<CreateItemInput>;
+
 export function createItemsService(db: AppDb) {
   return {
     list(search?: string) {
@@ -17,12 +19,13 @@ export function createItemsService(db: AppDb) {
         const term = `%${search}%`;
         return db.prepare(`
           SELECT * FROM items
-          WHERE name LIKE ? OR sku LIKE ? OR category LIKE ?
+          WHERE (name LIKE ? OR sku LIKE ? OR category LIKE ?)
+            AND status != 'archived'
           ORDER BY updated_at DESC, id DESC
         `).all(term, term, term);
       }
 
-      return db.prepare("SELECT * FROM items ORDER BY updated_at DESC, id DESC").all();
+      return db.prepare("SELECT * FROM items WHERE status != 'archived' ORDER BY updated_at DESC, id DESC").all();
     },
 
     get(id: number) {
@@ -46,6 +49,51 @@ export function createItemsService(db: AppDb) {
       );
 
       return this.get(Number(result.lastInsertRowid));
+    },
+
+    update(id: number, input: UpdateItemInput) {
+      const existing = this.get(id) as {
+        sku: string | null;
+        name: string;
+        description: string | null;
+        category: string | null;
+        photo_url: string | null;
+        notes: string | null;
+      } | undefined;
+      if (!existing) return null;
+
+      db.prepare(`
+        UPDATE items
+        SET
+          sku = ?,
+          name = ?,
+          description = ?,
+          category = ?,
+          photo_url = ?,
+          notes = ?,
+          updated_at = ?
+        WHERE id = ?
+      `).run(
+        input.sku ?? existing.sku ?? null,
+        input.name ?? existing.name,
+        input.description ?? existing.description ?? null,
+        input.category ?? existing.category ?? null,
+        input.photoUrl ?? existing.photo_url ?? null,
+        input.notes ?? existing.notes ?? null,
+        nowIso(),
+        id
+      );
+
+      return this.get(id);
+    },
+
+    remove(id: number) {
+      const existing = this.get(id);
+      if (!existing) return false;
+
+      db.prepare("UPDATE rfid_tags SET status = 'inactive' WHERE item_id = ?").run(id);
+      db.prepare("UPDATE items SET status = 'archived', updated_at = ? WHERE id = ?").run(nowIso(), id);
+      return true;
     }
   };
 }

@@ -6,10 +6,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { createDb } from "./db/connection.js";
+import { createAdminService } from "./modules/admin/admin.service.js";
 import { createItemsService } from "./modules/items/items.service.js";
+import { createReportsService } from "./modules/reports/reports.service.js";
 import { createRfidService } from "./modules/rfid/rfid.service.js";
 import type { RfidReadEvent, RfidSource } from "./modules/rfid/rfid.types.js";
 import { createSessionsService } from "./modules/sessions/sessions.service.js";
+import { createStationsService } from "./modules/stations/stations.service.js";
 import { createTagsService } from "./modules/tags/tags.service.js";
 import { nowIso } from "./utils/time.js";
 
@@ -19,17 +22,33 @@ const items = createItemsService(db);
 const tags = createTagsService(db);
 const sessions = createSessionsService(db);
 const rfid = createRfidService(db);
+const stations = createStationsService(db);
+const reports = createReportsService(db);
+const admin = createAdminService(db);
 
 await app.register(cors, { origin: true });
 
 app.get("/api/health", async () => ({ ok: true, service: "storage-tags", time: nowIso() }));
 
 app.get<{ Querystring: { search?: string } }>("/api/items", async (request) => items.list(request.query.search));
+app.get<{ Params: { id: string } }>("/api/items/:id", async (request, reply) => {
+  const item = items.get(Number(request.params.id));
+  return item ? item : reply.code(404).send({ ok: false, error: "ITEM_NOT_FOUND" });
+});
 app.post<{ Body: { sku?: string; name?: string; description?: string; category?: string; photoUrl?: string; notes?: string } }>("/api/items", async (request, reply) => {
   if (!request.body.name?.trim()) return reply.code(400).send({ ok: false, error: "NAME_REQUIRED" });
   return { ok: true, item: items.create({ ...request.body, name: request.body.name.trim() }) };
 });
+app.put<{ Params: { id: string }; Body: { sku?: string; name?: string; description?: string; category?: string; photoUrl?: string; notes?: string } }>("/api/items/:id", async (request, reply) => {
+  if (request.body.name !== undefined && !request.body.name.trim()) return reply.code(400).send({ ok: false, error: "NAME_REQUIRED" });
+  const item = items.update(Number(request.params.id), request.body);
+  return item ? { ok: true, item } : reply.code(404).send({ ok: false, error: "ITEM_NOT_FOUND" });
+});
+app.delete<{ Params: { id: string } }>("/api/items/:id", async (request, reply) => {
+  return items.remove(Number(request.params.id)) ? { ok: true } : reply.code(404).send({ ok: false, error: "ITEM_NOT_FOUND" });
+});
 
+app.get<{ Querystring: { status?: string } }>("/api/tags", async (request) => tags.list(request.query.status));
 app.get<{ Params: { epc: string } }>("/api/tags/:epc", async (request) => {
   const tag = tags.resolve(request.params.epc);
   return { ok: true, known: Boolean(tag), tag };
@@ -38,6 +57,16 @@ app.get<{ Params: { epc: string } }>("/api/tags/:epc", async (request) => {
 app.post<{ Body: { epc?: string; itemId?: number; tid?: string } }>("/api/tags/register", async (request, reply) => {
   if (!request.body.epc || !request.body.itemId) return reply.code(400).send({ ok: false, error: "EPC_AND_ITEM_REQUIRED" });
   const result = tags.register(request.body.epc, request.body.itemId, request.body.tid);
+  return result.ok ? result : reply.code(400).send(result);
+});
+app.put<{ Params: { epc: string }; Body: { status?: "active" | "inactive" | "ignored" | "external" } }>("/api/tags/:epc/status", async (request, reply) => {
+  if (!request.body.status) return reply.code(400).send({ ok: false, error: "STATUS_REQUIRED" });
+  const result = tags.setStatus(request.params.epc, request.body.status);
+  return result.ok ? result : reply.code(400).send(result);
+});
+app.post<{ Body: { epc?: string; status?: "ignored" | "external" } }>("/api/tags/mark-unknown", async (request, reply) => {
+  if (!request.body.epc || !request.body.status) return reply.code(400).send({ ok: false, error: "EPC_AND_STATUS_REQUIRED" });
+  const result = tags.markUnknown(request.body.epc, request.body.status);
   return result.ok ? result : reply.code(400).send(result);
 });
 
@@ -84,6 +113,26 @@ app.post<{ Params: { sessionKey: string } }>("/api/inventory-sessions/:sessionKe
   return session ? { ok: true, session } : reply.code(404).send({ ok: false, error: "SESSION_NOT_FOUND" });
 });
 
+app.get("/api/stations", async () => stations.list());
+app.get<{ Params: { stationKey: string } }>("/api/stations/:stationKey", async (request, reply) => {
+  const station = stations.get(request.params.stationKey);
+  return station ? station : reply.code(404).send({ ok: false, error: "STATION_NOT_FOUND" });
+});
+app.put<{ Params: { stationKey: string }; Body: { name?: string; type?: string; inputMode?: string; deviceLabel?: string; config?: Record<string, unknown> } }>("/api/stations/:stationKey", async (request, reply) => {
+  const stationKey = request.params.stationKey.trim();
+  const name = request.body.name?.trim() || stationKey;
+  return { ok: true, station: stations.upsert({ ...request.body, stationKey, name }) };
+});
+app.post<{ Body: { stationKey?: string; name?: string; type?: string; inputMode?: string; deviceLabel?: string; config?: Record<string, unknown> } }>("/api/stations", async (request, reply) => {
+  if (!request.body.stationKey?.trim()) return reply.code(400).send({ ok: false, error: "STATION_KEY_REQUIRED" });
+  return { ok: true, station: stations.upsert({ ...request.body, stationKey: request.body.stationKey.trim(), name: request.body.name?.trim() || request.body.stationKey.trim() }) };
+});
+
+app.get("/api/reports/unknown-tags", async () => reports.unknownTags());
+app.get("/api/reports/items-last-seen", async () => reports.itemsLastSeen());
+app.post("/api/admin/backup", async () => ({ ok: true, backup: admin.backup() }));
+app.post("/api/admin/seed-demo", async () => ({ ok: true, ...admin.seedDemoData() }));
+
 app.get<{ Params: { sessionKey: string } }>("/api/reports/session/:sessionKey/csv", async (request, reply) => {
   const session = sessions.get(request.params.sessionKey);
   if (!session) return reply.code(404).send({ ok: false, error: "SESSION_NOT_FOUND" });
@@ -102,7 +151,10 @@ app.get<{ Params: { sessionKey: string } }>("/api/reports/session/:sessionKey/cs
   ];
   const csv = rows.map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\n");
 
-  return reply.header("content-type", "text/csv").send(csv);
+  return reply
+    .header("content-type", "text/csv")
+    .header("content-disposition", `attachment; filename="${request.params.sessionKey}.csv"`)
+    .send(csv);
 });
 
 const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "public");

@@ -16,6 +16,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -41,6 +42,27 @@ button.danger {
 button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
+}
+
+.button-link {
+  align-items: center;
+  background: #46515c;
+  border-radius: 6px;
+  color: white;
+  display: inline-flex;
+  min-height: 40px;
+  padding: 0 14px;
+  text-decoration: none;
+}
+
+.button-link.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+button.compact {
+  min-height: 32px;
+  padding: 0 10px;
 }
 
 .app-shell {
@@ -83,6 +105,12 @@ nav button {
 nav button.active,
 nav button:hover {
   background: #284149;
+}
+
+.sidebar-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 24px;
 }
 
 .workspace {
@@ -128,6 +156,11 @@ h2 {
   margin: 0;
 }
 
+h3 {
+  font-size: 18px;
+  margin: 0 0 12px;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -158,6 +191,7 @@ label {
 }
 
 input,
+select,
 textarea {
   background: white;
   border: 1px solid #cfd6d8;
@@ -202,6 +236,27 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.reader-strip {
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+}
+
+.quick-scans {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.split {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.split section {
+  min-width: 0;
+}
+
 table {
   background: white;
   border-collapse: collapse;
@@ -235,6 +290,17 @@ tbody tr:hover {
   background: #f7faf8;
 }
 
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.low {
+  color: #a33c35;
+  font-weight: 700;
+}
+
 .mono {
   font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-size: 13px;
@@ -262,7 +328,8 @@ tbody tr:hover {
   .form-grid,
   .form-grid.two,
   .metrics,
-  .reader-strip {
+  .reader-strip,
+  .split {
     grid-template-columns: 1fr;
   }
 
