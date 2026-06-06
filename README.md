@@ -180,12 +180,6 @@ Backups are written under:
 data/backups/
 ```
 
-## Local Development Notes
-
-`LOCAL_CONTEXT.md` is the local living project memory. It is ignored by git and should be updated whenever architecture, flows, schema assumptions, route responsibilities, environment variables, or development conventions change.
-
-All project-facing text should stay in English.
-
 ## License
 
 This project uses a custom source-available license. Free non-commercial use is allowed. Commercial use is reserved exclusively to the copyright holder. See [LICENSE](LICENSE) for the full terms.
