@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS tags (
   last_auth_status TEXT NOT NULL DEFAULT 'not-requested',
   last_auth_counter INTEGER,
   last_tamper_status TEXT NOT NULL DEFAULT 'unknown',
+  permanent_tamper_status TEXT NOT NULL DEFAULT 'unknown',
   last_seen_at TEXT,
   registered_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS inventory_observations (
   known_item_id INTEGER,
   auth_status TEXT NOT NULL DEFAULT 'not-requested',
   tamper_status TEXT NOT NULL DEFAULT 'unknown',
+  permanent_tamper_status TEXT NOT NULL DEFAULT 'unknown',
   FOREIGN KEY (session_id) REFERENCES inventory_sessions(id),
   FOREIGN KEY (tag_id) REFERENCES tags(id),
   FOREIGN KEY (known_item_id) REFERENCES items(id),
@@ -113,6 +115,7 @@ CREATE TABLE IF NOT EXISTS tag_events (
   auth_status TEXT NOT NULL DEFAULT 'not-requested',
   auth_counter INTEGER,
   tamper_status TEXT NOT NULL DEFAULT 'unknown',
+  permanent_tamper_status TEXT NOT NULL DEFAULT 'unknown',
   sensor_value REAL,
   sensor_unit TEXT,
   payload_json TEXT,
@@ -128,7 +131,7 @@ CREATE INDEX IF NOT EXISTS idx_items_sku ON items(sku);
 CREATE INDEX IF NOT EXISTS idx_tags_item ON tags(item_id);
 CREATE INDEX IF NOT EXISTS idx_tags_identifier ON tags(technology, identifier);
 CREATE INDEX IF NOT EXISTS idx_tags_auth ON tags(last_auth_status);
-CREATE INDEX IF NOT EXISTS idx_tags_tamper ON tags(last_tamper_status);
+CREATE INDEX IF NOT EXISTS idx_tags_tamper ON tags(last_tamper_status, permanent_tamper_status);
 CREATE INDEX IF NOT EXISTS idx_inventory_observations_session ON inventory_observations(session_id);
 CREATE INDEX IF NOT EXISTS idx_tag_events_tag ON tag_events(tag_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tag_events_session ON tag_events(session_id, occurred_at DESC);
