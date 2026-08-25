@@ -9,6 +9,20 @@ export type CreateSessionInput = {
   notes?: string;
 };
 
+type SessionRow = {
+  id: number;
+  session_key: string;
+  station_id: number | null;
+  station_key: string | null;
+  station_name: string | null;
+  container_code: string | null;
+  location_name: string | null;
+  started_at: string;
+  ended_at: string | null;
+  status: string;
+  notes: string | null;
+};
+
 export function createSessionsService(db: AppDb) {
   function ensureStation(stationKey?: string): number | null {
     if (!stationKey) return null;
@@ -24,6 +38,48 @@ export function createSessionsService(db: AppDb) {
     return Number(result.lastInsertRowid);
   }
 
+  function get(sessionKey: string) {
+    const session = db.prepare(`
+      SELECT inventory_sessions.*, stations.station_key, stations.name AS station_name
+      FROM inventory_sessions
+      LEFT JOIN stations ON stations.id = inventory_sessions.station_id
+      WHERE inventory_sessions.session_key = ?
+    `).get(sessionKey) as SessionRow | undefined;
+    if (!session) return null;
+
+    const reads = db.prepare(`
+      SELECT
+        inventory_observations.*,
+        items.name AS item_name,
+        items.sku AS item_sku,
+        items.category AS item_category,
+        tags.chip_model,
+        tags.product_family,
+        tags.part_number
+      FROM inventory_observations
+      LEFT JOIN items ON items.id = inventory_observations.known_item_id
+      LEFT JOIN tags ON tags.id = inventory_observations.tag_id
+      WHERE inventory_observations.session_id = ?
+      ORDER BY inventory_observations.last_seen_at DESC
+    `).all(session.id);
+
+    const events = db.prepare(`
+      SELECT
+        tag_events.*,
+        items.name AS item_name,
+        items.sku AS item_sku,
+        tags.chip_model,
+        tags.product_family
+      FROM tag_events
+      LEFT JOIN tags ON tags.id = tag_events.tag_id
+      LEFT JOIN items ON items.id = tags.item_id
+      WHERE tag_events.session_id = ?
+      ORDER BY tag_events.occurred_at DESC, tag_events.id DESC
+    `).all(session.id);
+
+    return { ...session, reads, events };
+  }
+
   return {
     create(input: CreateSessionInput) {
       const stationId = ensureStation(input.stationKey);
@@ -34,7 +90,7 @@ export function createSessionsService(db: AppDb) {
         VALUES (?, ?, ?, ?, ?, ?, 'open')
       `).run(sessionKey, stationId, input.containerCode ?? null, input.locationName ?? null, input.notes ?? null, nowIso());
 
-      return this.get(sessionKey);
+      return get(sessionKey);
     },
 
     list() {
@@ -57,47 +113,7 @@ export function createSessionsService(db: AppDb) {
       `).all();
     },
 
-    get(sessionKey: string) {
-      const session = db.prepare(`
-        SELECT inventory_sessions.*, stations.station_key, stations.name AS station_name
-        FROM inventory_sessions
-        LEFT JOIN stations ON stations.id = inventory_sessions.station_id
-        WHERE inventory_sessions.session_key = ?
-      `).get(sessionKey) as { id: number } | undefined;
-      if (!session) return null;
-
-      const reads = db.prepare(`
-        SELECT
-          inventory_observations.*,
-          items.name AS item_name,
-          items.sku AS item_sku,
-          items.category AS item_category,
-          tags.chip_model,
-          tags.product_family,
-          tags.part_number
-        FROM inventory_observations
-        LEFT JOIN items ON items.id = inventory_observations.known_item_id
-        LEFT JOIN tags ON tags.id = inventory_observations.tag_id
-        WHERE inventory_observations.session_id = ?
-        ORDER BY inventory_observations.last_seen_at DESC
-      `).all(session.id);
-
-      const events = db.prepare(`
-        SELECT
-          tag_events.*,
-          items.name AS item_name,
-          items.sku AS item_sku,
-          tags.chip_model,
-          tags.product_family
-        FROM tag_events
-        LEFT JOIN tags ON tags.id = tag_events.tag_id
-        LEFT JOIN items ON items.id = tags.item_id
-        WHERE tag_events.session_id = ?
-        ORDER BY tag_events.occurred_at DESC, tag_events.id DESC
-      `).all(session.id);
-
-      return { ...session, reads, events };
-    },
+    get,
 
     close(sessionKey: string) {
       db.prepare(`
@@ -106,7 +122,7 @@ export function createSessionsService(db: AppDb) {
         WHERE session_key = ? AND status = 'open'
       `).run(nowIso(), sessionKey);
 
-      return this.get(sessionKey);
+      return get(sessionKey);
     }
   };
 }
