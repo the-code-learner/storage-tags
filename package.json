@@ -10,7 +10,8 @@
     "dev:web": "vite --host 0.0.0.0",
     "test": "tsx --test src/**/*.test.ts",
     "build": "tsc && vite build",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "mcp": "node dist/mcp-server.js"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.1",
