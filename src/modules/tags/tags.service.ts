@@ -1,101 +1,145 @@
 import type { AppDb } from "../../db/connection.js";
-import { normalizeEpc } from "../../utils/normalize-epc.js";
+import { normalizeTagIdentifier } from "../../utils/normalize-tag.js";
+import { nowIso } from "../../utils/time.js";
+import { getCatalogEntry, tagCatalog } from "./tag.catalog.js";
+import type { RegisterTagInput, TagStatus, TagTechnology } from "./tag.types.js";
+
+function selectTagSql() {
+  return `
+    SELECT
+      tags.*,
+      items.name AS item_name,
+      items.sku AS item_sku,
+      items.category AS item_category,
+      tag_security_profiles.profile_key AS security_profile_key,
+      tag_security_profiles.name AS security_profile_name,
+      tag_security_profiles.verifier AS security_verifier
+    FROM tags
+    LEFT JOIN items ON items.id = tags.item_id
+    LEFT JOIN tag_security_profiles ON tag_security_profiles.id = tags.security_profile_id
+  `;
+}
 
 export function createTagsService(db: AppDb) {
+  function resolve(technology: TagTechnology, rawIdentifier: string) {
+    const identifier = normalizeTagIdentifier(technology, rawIdentifier);
+    if (!identifier) return null;
+
+    return db.prepare(`${selectTagSql()} WHERE tags.technology = ? AND tags.identifier = ?`).get(technology, identifier);
+  }
+
   return {
-    list(status?: string) {
-      if (status) {
-        return db.prepare(`
-          SELECT
-            rfid_tags.*,
-            items.name AS item_name,
-            items.sku AS item_sku,
-            items.category AS item_category
-          FROM rfid_tags
-          LEFT JOIN items ON items.id = rfid_tags.item_id
-          WHERE rfid_tags.status = ?
-          ORDER BY rfid_tags.registered_at DESC
-        `).all(status);
+    catalog() {
+      return tagCatalog;
+    },
+
+    list(filters: { status?: string; technology?: TagTechnology; search?: string } = {}) {
+      const clauses: string[] = [];
+      const values: unknown[] = [];
+
+      if (filters.status) {
+        clauses.push("tags.status = ?");
+        values.push(filters.status);
+      }
+      if (filters.technology) {
+        clauses.push("tags.technology = ?");
+        values.push(filters.technology);
+      }
+      if (filters.search) {
+        const term = `%${filters.search}%`;
+        clauses.push("(tags.identifier LIKE ? OR tags.epc LIKE ? OR tags.uid LIKE ? OR tags.chip_model LIKE ? OR tags.product_family LIKE ? OR items.name LIKE ? OR items.sku LIKE ?)");
+        values.push(term, term, term, term, term, term, term);
       }
 
-      return db.prepare(`
-        SELECT
-          rfid_tags.*,
-          items.name AS item_name,
-          items.sku AS item_sku,
-          items.category AS item_category
-        FROM rfid_tags
-        LEFT JOIN items ON items.id = rfid_tags.item_id
-        ORDER BY rfid_tags.registered_at DESC
-      `).all();
+      const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
+      return db.prepare(`${selectTagSql()}${where} ORDER BY COALESCE(tags.last_seen_at, tags.registered_at) DESC, tags.id DESC`).all(...values);
     },
 
-    resolve(rawEpc: string) {
-      const epc = normalizeEpc(rawEpc);
-      if (!epc) return null;
-
-      return db.prepare(`
-        SELECT
-          rfid_tags.*,
-          items.name AS item_name,
-          items.sku AS item_sku,
-          items.category AS item_category
-        FROM rfid_tags
-        LEFT JOIN items ON items.id = rfid_tags.item_id
-        WHERE rfid_tags.epc = ?
-      `).get(epc);
+    getById(id: number) {
+      return db.prepare(`${selectTagSql()} WHERE tags.id = ?`).get(id);
     },
 
-    register(rawEpc: string, itemId: number, tid?: string) {
-      const epc = normalizeEpc(rawEpc);
-      if (!epc) return { ok: false, error: "INVALID_EPC" };
+    resolve,
 
-      const item = db.prepare("SELECT id FROM items WHERE id = ?").get(itemId);
-      if (!item) return { ok: false, error: "ITEM_NOT_FOUND" };
+    register(input: RegisterTagInput) {
+      const catalog = getCatalogEntry(input.catalogKey);
+      const technology = catalog?.technology ?? input.technology;
+      const identifier = normalizeTagIdentifier(technology, input.identifier);
+      if (!identifier) return { ok: false, error: "INVALID_IDENTIFIER" as const };
+
+      if (input.itemId !== undefined) {
+        const item = db.prepare("SELECT id FROM items WHERE id = ? AND status != 'archived'").get(input.itemId);
+        if (!item) return { ok: false, error: "ITEM_NOT_FOUND" as const };
+      }
+
+      let securityProfileId: number | null = null;
+      if (input.securityProfileKey) {
+        const profile = db.prepare("SELECT id FROM tag_security_profiles WHERE profile_key = ? AND status = 'active'").get(input.securityProfileKey) as { id: number } | undefined;
+        if (!profile) return { ok: false, error: "SECURITY_PROFILE_NOT_FOUND" as const };
+        securityProfileId = profile.id;
+      }
+
+      const capabilities = { ...(catalog?.capabilities ?? {}), ...(input.capabilities ?? {}) };
+      const timestamp = nowIso();
+      const epc = technology === "uhf-rain" ? normalizeTagIdentifier("uhf-rain", input.epc ?? identifier) : input.epc ?? null;
+      const uid = technology === "nfc" ? normalizeTagIdentifier("nfc", input.uid ?? identifier) : input.uid ?? null;
 
       db.prepare(`
-        INSERT INTO rfid_tags (epc, tid, item_id)
-        VALUES (?, ?, ?)
-        ON CONFLICT(epc) DO UPDATE SET
-          tid = COALESCE(excluded.tid, rfid_tags.tid),
-          item_id = excluded.item_id,
-          status = 'active'
-      `).run(epc, tid ?? null, itemId);
-
-      return { ok: true, tag: this.resolve(epc) };
-    },
-
-    setStatus(rawEpc: string, status: "active" | "inactive" | "ignored" | "external") {
-      const epc = normalizeEpc(rawEpc);
-      if (!epc) return { ok: false, error: "INVALID_EPC" };
-
-      const result = db.prepare("UPDATE rfid_tags SET status = ? WHERE epc = ?").run(status, epc);
-      if (result.changes === 0) return { ok: false, error: "TAG_NOT_FOUND" };
-
-      return { ok: true, tag: this.resolve(epc) };
-    },
-
-    markUnknown(rawEpc: string, status: "ignored" | "external") {
-      const epc = normalizeEpc(rawEpc);
-      if (!epc) return { ok: false, error: "INVALID_EPC" };
-
-      const placeholder = db.prepare("SELECT id FROM items WHERE sku = ?").get(`SYSTEM-${status.toUpperCase()}`) as { id: number } | undefined;
-      const itemId = placeholder?.id ?? Number(db.prepare(`
-        INSERT INTO items (sku, name, category, notes)
-        VALUES (?, ?, 'System', ?)
+        INSERT INTO tags (
+          technology, identifier, epc, tid, uid,
+          manufacturer, chip_family, chip_model, product_family, part_number,
+          capabilities_json, metadata_json, security_profile_id, item_id,
+          status, registered_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(technology, identifier) DO UPDATE SET
+          epc = COALESCE(excluded.epc, tags.epc),
+          tid = COALESCE(excluded.tid, tags.tid),
+          uid = COALESCE(excluded.uid, tags.uid),
+          manufacturer = COALESCE(excluded.manufacturer, tags.manufacturer),
+          chip_family = COALESCE(excluded.chip_family, tags.chip_family),
+          chip_model = COALESCE(excluded.chip_model, tags.chip_model),
+          product_family = COALESCE(excluded.product_family, tags.product_family),
+          part_number = COALESCE(excluded.part_number, tags.part_number),
+          capabilities_json = COALESCE(excluded.capabilities_json, tags.capabilities_json),
+          metadata_json = COALESCE(excluded.metadata_json, tags.metadata_json),
+          security_profile_id = COALESCE(excluded.security_profile_id, tags.security_profile_id),
+          item_id = COALESCE(excluded.item_id, tags.item_id),
+          status = excluded.status,
+          updated_at = excluded.updated_at
       `).run(
-        `SYSTEM-${status.toUpperCase()}`,
-        status === "ignored" ? "Ignored external tag" : "External tag",
-        "System placeholder for non-inventory RFID reads"
-      ).lastInsertRowid);
+        technology,
+        identifier,
+        epc,
+        input.tid ?? null,
+        uid,
+        input.manufacturer ?? catalog?.manufacturer ?? null,
+        input.chipFamily ?? catalog?.chipFamily ?? null,
+        input.chipModel ?? catalog?.chipModel ?? null,
+        input.productFamily ?? catalog?.productFamily ?? null,
+        input.partNumber ?? catalog?.partNumber ?? null,
+        Object.keys(capabilities).length ? JSON.stringify(capabilities) : null,
+        input.metadata ? JSON.stringify(input.metadata) : null,
+        securityProfileId,
+        input.itemId ?? null,
+        input.status ?? "active",
+        timestamp,
+        timestamp
+      );
 
-      db.prepare(`
-        INSERT INTO rfid_tags (epc, item_id, status)
-        VALUES (?, ?, ?)
-        ON CONFLICT(epc) DO UPDATE SET status = excluded.status
-      `).run(epc, itemId, status);
+      return { ok: true, tag: resolve(technology, identifier) };
+    },
 
-      return { ok: true, tag: this.resolve(epc) };
+    setStatus(technology: TagTechnology, rawIdentifier: string, status: TagStatus) {
+      const identifier = normalizeTagIdentifier(technology, rawIdentifier);
+      if (!identifier) return { ok: false, error: "INVALID_IDENTIFIER" as const };
+
+      const result = db.prepare("UPDATE tags SET status = ?, updated_at = ? WHERE technology = ? AND identifier = ?").run(status, nowIso(), technology, identifier);
+      if (result.changes === 0) return { ok: false, error: "TAG_NOT_FOUND" as const };
+      return { ok: true, tag: resolve(technology, identifier) };
+    },
+
+    markUnknown(technology: TagTechnology, rawIdentifier: string, status: "ignored" | "external") {
+      return this.register({ technology, identifier: rawIdentifier, status });
     }
   };
 }
