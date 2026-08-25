@@ -53,6 +53,7 @@ export function createObservationsService(db: AppDb) {
             uid = COALESCE(?, uid),
             last_seen_at = ?,
             last_auth_status = CASE WHEN ? = 'not-requested' THEN last_auth_status ELSE ? END,
+            last_auth_counter = CASE WHEN ? IS NULL THEN last_auth_counter ELSE ? END,
             last_tamper_status = CASE WHEN ? = 'unknown' THEN last_tamper_status ELSE ? END,
             updated_at = ?
           WHERE id = ?
@@ -63,6 +64,8 @@ export function createObservationsService(db: AppDb) {
           seenAt,
           authStatus,
           authStatus,
+          input.authCounter ?? null,
+          input.authCounter ?? null,
           tamperStatus,
           tamperStatus,
           seenAt,
@@ -117,9 +120,9 @@ export function createObservationsService(db: AppDb) {
         db.prepare(`
           INSERT INTO tag_events (
             event_kind, session_id, station_id, tag_id, technology, identifier,
-            source, auth_status, tamper_status, sensor_value, sensor_unit,
+            source, auth_status, auth_counter, tamper_status, sensor_value, sensor_unit,
             payload_json, raw, occurred_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           eventKind,
           session?.id ?? null,
@@ -129,6 +132,7 @@ export function createObservationsService(db: AppDb) {
           identifier,
           input.source,
           authStatus,
+          input.authCounter ?? null,
           tamperStatus,
           input.sensorValue ?? null,
           input.sensorUnit ?? null,
@@ -144,6 +148,7 @@ export function createObservationsService(db: AppDb) {
         identifier,
         known: Boolean(tag),
         authStatus,
+        authCounter: input.authCounter ?? null,
         tamperStatus,
         item: tag ? {
           id: tag.item_id,
