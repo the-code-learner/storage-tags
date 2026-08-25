@@ -10,6 +10,12 @@ export function createDb(databaseUrl = config.databaseUrl) {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(schemaSql);
+  ensureColumn(db, "items", "status", "TEXT DEFAULT 'active'");
+  ensureColumn(db, "tags", "last_auth_counter", "INTEGER");
+  ensureColumn(db, "tags", "permanent_tamper_status", "TEXT NOT NULL DEFAULT 'unknown'");
+  ensureColumn(db, "inventory_observations", "permanent_tamper_status", "TEXT NOT NULL DEFAULT 'unknown'");
+  ensureColumn(db, "tag_events", "auth_counter", "INTEGER");
+  ensureColumn(db, "tag_events", "permanent_tamper_status", "TEXT NOT NULL DEFAULT 'unknown'");
   migrateLegacyRfidData(db);
   return db;
 }
@@ -19,6 +25,12 @@ export type AppDb = ReturnType<typeof createDb>;
 function tableExists(db: DatabaseSync, table: string) {
   const row = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as { name: string } | undefined;
   return Boolean(row);
+}
+
+function ensureColumn(db: DatabaseSync, table: string, column: string, definition: string) {
+  if (!tableExists(db, table)) return;
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!columns.some((entry) => entry.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
 function migrateLegacyRfidData(db: DatabaseSync) {
@@ -70,7 +82,8 @@ function migrateLegacyRfidData(db: DatabaseSync) {
           last_seen_at,
           known_item_id,
           auth_status,
-          tamper_status
+          tamper_status,
+          permanent_tamper_status
         )
         SELECT
           legacy.session_id,
@@ -85,6 +98,7 @@ function migrateLegacyRfidData(db: DatabaseSync) {
           COALESCE(legacy.last_seen_at, legacy.first_seen_at, CURRENT_TIMESTAMP),
           legacy.known_item_id,
           'not-requested',
+          'unknown',
           'unknown'
         FROM inventory_reads legacy
         LEFT JOIN tags
