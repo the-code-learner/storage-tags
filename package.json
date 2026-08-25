@@ -8,7 +8,7 @@
     "dev": "concurrently \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch src/server.ts",
     "dev:web": "vite --host 0.0.0.0",
-    "test": "tsx --test src/**/*.test.ts",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "build": "tsc && vite build",
     "start": "node dist/server.js",
     "mcp": "node dist/mcp-server.js"
