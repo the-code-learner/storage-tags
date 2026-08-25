@@ -19,27 +19,73 @@ export function createAdminService(db: AppDb) {
       const count = db.prepare("SELECT COUNT(*) AS count FROM items").get() as { count: number };
       if (count.count > 0) return { inserted: false };
 
-      const items = [
-        ["OIL-EVO-500", "Extra Virgin Olive Oil 500 ml", "Food / Oil", "Demo item"],
+      const demoItems = [
+        ["OIL-EVO-500", "Extra Virgin Olive Oil 500 ml", "Food / Oil", "Demo item with UHF and NFC identity"],
         ["PASTA-001", "Pasta 1 kg", "Food / Dry Goods", "Demo item"],
         ["DOC-BOX-A", "Archive Box A", "Documents", "Demo item"]
       ];
 
-      for (const item of items) {
+      for (const item of demoItems) {
         db.prepare("INSERT INTO items (sku, name, category, notes) VALUES (?, ?, ?, ?)").run(...item);
       }
 
       const rows = db.prepare("SELECT id, sku FROM items").all() as { id: number; sku: string }[];
       const bySku = new Map(rows.map((row) => [row.sku, row.id]));
       const tags = [
-        ["3034257BF7194E4000001A85", bySku.get("OIL-EVO-500")],
-        ["3034257BF7194E4000001A86", bySku.get("PASTA-001")],
-        ["E2806894000040178F2A91B5", bySku.get("DOC-BOX-A")]
-      ] as [string, number | undefined][];
+        {
+          technology: "uhf-rain",
+          identifier: "3034257BF7194E4000001A85",
+          epc: "3034257BF7194E4000001A85",
+          itemId: bySku.get("OIL-EVO-500"),
+          chipFamily: "generic-uhf",
+          capabilities: { bulkInventory: true }
+        },
+        {
+          technology: "nfc",
+          identifier: "04DE5F1EACC040",
+          uid: "04DE5F1EACC040",
+          itemId: bySku.get("OIL-EVO-500"),
+          manufacturer: "NXP",
+          chipFamily: "NTAG 424 DNA",
+          chipModel: "NTAG 424 DNA TagTamper",
+          capabilities: { ndef: true, sun: true, sdm: true, tamper: true, currentTamperStatus: true, permanentTamperStatus: true }
+        },
+        {
+          technology: "uhf-rain",
+          identifier: "3034257BF7194E4000001A86",
+          epc: "3034257BF7194E4000001A86",
+          itemId: bySku.get("PASTA-001"),
+          chipFamily: "generic-uhf",
+          capabilities: { bulkInventory: true }
+        },
+        {
+          technology: "uhf-rain",
+          identifier: "E2806894000040178F2A91B5",
+          epc: "E2806894000040178F2A91B5",
+          itemId: bySku.get("DOC-BOX-A"),
+          chipFamily: "generic-uhf",
+          capabilities: { bulkInventory: true }
+        }
+      ];
 
-      for (const [epc, itemId] of tags) {
-        if (!itemId) continue;
-        db.prepare("INSERT INTO rfid_tags (epc, item_id) VALUES (?, ?)").run(epc, itemId);
+      for (const tag of tags) {
+        if (!tag.itemId) continue;
+        db.prepare(`
+          INSERT INTO tags (
+            technology, identifier, epc, uid, manufacturer, chip_family, chip_model,
+            capabilities_json, item_id, status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
+        `).run(
+          tag.technology,
+          tag.identifier,
+          tag.epc ?? null,
+          tag.uid ?? null,
+          tag.manufacturer ?? null,
+          tag.chipFamily,
+          tag.chipModel ?? null,
+          JSON.stringify(tag.capabilities),
+          tag.itemId
+        );
       }
 
       return { inserted: true };
