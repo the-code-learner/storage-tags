@@ -43,6 +43,7 @@ export function createObservationsService(db: AppDb) {
       const tag = findTag(input.technology, identifier);
       const authStatus: AuthStatus = input.authStatus ?? "not-requested";
       const tamperStatus: TamperStatus = input.tamperStatus ?? "unknown";
+      const permanentTamperStatus: TamperStatus = input.permanentTamperStatus ?? "unknown";
 
       if (tag) {
         db.prepare(`
@@ -55,6 +56,7 @@ export function createObservationsService(db: AppDb) {
             last_auth_status = CASE WHEN ? = 'not-requested' THEN last_auth_status ELSE ? END,
             last_auth_counter = CASE WHEN ? IS NULL THEN last_auth_counter ELSE ? END,
             last_tamper_status = CASE WHEN ? = 'unknown' THEN last_tamper_status ELSE ? END,
+            permanent_tamper_status = CASE WHEN ? = 'unknown' THEN permanent_tamper_status ELSE ? END,
             updated_at = ?
           WHERE id = ?
         `).run(
@@ -68,6 +70,8 @@ export function createObservationsService(db: AppDb) {
           input.authCounter ?? null,
           tamperStatus,
           tamperStatus,
+          permanentTamperStatus,
+          permanentTamperStatus,
           seenAt,
           tag.id
         );
@@ -77,8 +81,9 @@ export function createObservationsService(db: AppDb) {
         db.prepare(`
           INSERT INTO inventory_observations (
             session_id, tag_id, technology, identifier, source, rssi, antenna,
-            read_count, first_seen_at, last_seen_at, known_item_id, auth_status, tamper_status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
+            read_count, first_seen_at, last_seen_at, known_item_id, auth_status,
+            tamper_status, permanent_tamper_status
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_id, technology, identifier) DO UPDATE SET
             tag_id = COALESCE(excluded.tag_id, inventory_observations.tag_id),
             read_count = inventory_observations.read_count + 1,
@@ -86,6 +91,7 @@ export function createObservationsService(db: AppDb) {
             known_item_id = COALESCE(excluded.known_item_id, inventory_observations.known_item_id),
             auth_status = CASE WHEN excluded.auth_status = 'not-requested' THEN inventory_observations.auth_status ELSE excluded.auth_status END,
             tamper_status = CASE WHEN excluded.tamper_status = 'unknown' THEN inventory_observations.tamper_status ELSE excluded.tamper_status END,
+            permanent_tamper_status = CASE WHEN excluded.permanent_tamper_status = 'unknown' THEN inventory_observations.permanent_tamper_status ELSE excluded.permanent_tamper_status END,
             rssi = COALESCE(excluded.rssi, inventory_observations.rssi),
             antenna = COALESCE(excluded.antenna, inventory_observations.antenna)
         `).run(
@@ -100,7 +106,8 @@ export function createObservationsService(db: AppDb) {
           seenAt,
           tag?.item_id ?? null,
           authStatus,
-          tamperStatus
+          tamperStatus,
+          permanentTamperStatus
         );
       }
 
@@ -108,21 +115,22 @@ export function createObservationsService(db: AppDb) {
         input.technology === "nfc" ||
         authStatus !== "not-requested" ||
         tamperStatus !== "unknown" ||
+        permanentTamperStatus !== "unknown" ||
         input.sensorValue !== undefined;
 
       if (shouldRecordEvent) {
         const eventKind = authStatus !== "not-requested"
           ? "verification"
-          : tamperStatus !== "unknown" || input.sensorValue !== undefined
+          : tamperStatus !== "unknown" || permanentTamperStatus !== "unknown" || input.sensorValue !== undefined
             ? "status"
             : "scan";
 
         db.prepare(`
           INSERT INTO tag_events (
             event_kind, session_id, station_id, tag_id, technology, identifier,
-            source, auth_status, auth_counter, tamper_status, sensor_value, sensor_unit,
-            payload_json, raw, occurred_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            source, auth_status, auth_counter, tamper_status, permanent_tamper_status,
+            sensor_value, sensor_unit, payload_json, raw, occurred_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           eventKind,
           session?.id ?? null,
@@ -134,6 +142,7 @@ export function createObservationsService(db: AppDb) {
           authStatus,
           input.authCounter ?? null,
           tamperStatus,
+          permanentTamperStatus,
           input.sensorValue ?? null,
           input.sensorUnit ?? null,
           input.payload || input.ndefUrl ? JSON.stringify({ ...(input.payload ?? {}), ...(input.ndefUrl ? { ndefUrl: input.ndefUrl } : {}) }) : null,
@@ -150,6 +159,7 @@ export function createObservationsService(db: AppDb) {
         authStatus,
         authCounter: input.authCounter ?? null,
         tamperStatus,
+        permanentTamperStatus,
         item: tag ? {
           id: tag.item_id,
           name: tag.item_name,
