@@ -39,6 +39,7 @@ export type TagObservationInput = {
   authStatus?: AuthStatus;
   authCounter?: number;
   tamperStatus?: TamperStatus;
+  permanentTamperStatus?: TamperStatus;
   sensorValue?: number;
   sensorUnit?: string;
   seenAt?: string;
