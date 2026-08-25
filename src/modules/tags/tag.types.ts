@@ -1,7 +1,7 @@
 export type TagTechnology = "uhf-rain" | "nfc";
 export type TagStatus = "active" | "inactive" | "ignored" | "external";
-export type AuthStatus = "not-requested" | "pending" | "verified" | "failed" | "unsupported" | "error";
-export type TamperStatus = "unknown" | "sealed" | "open" | "closed" | "opened-once";
+export type AuthStatus = "not-requested" | "pending" | "verified" | "failed" | "replay" | "unsupported" | "error";
+export type TamperStatus = "unknown" | "sealed" | "open" | "closed" | "opened-once" | "invalid";
 export type TagReadSource = "browser-hid" | "browser-webnfc" | "reader-bridge" | "mock";
 
 export type TagCapabilities = {
@@ -37,6 +37,7 @@ export type TagObservationInput = {
   ndefUrl?: string;
   payload?: Record<string, unknown>;
   authStatus?: AuthStatus;
+  authCounter?: number;
   tamperStatus?: TamperStatus;
   sensorValue?: number;
   sensorUnit?: string;
