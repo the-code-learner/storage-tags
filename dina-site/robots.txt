@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://dina-brand-strategy.pages.dev/sitemap.xml
