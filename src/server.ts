@@ -8,12 +8,13 @@ import { config } from "./config.js";
 import { createDb } from "./db/connection.js";
 import { createAdminService } from "./modules/admin/admin.service.js";
 import { createItemsService } from "./modules/items/items.service.js";
+import { createObservationsService } from "./modules/observations/observations.service.js";
 import { createReportsService } from "./modules/reports/reports.service.js";
-import { createRfidService } from "./modules/rfid/rfid.service.js";
-import type { RfidReadEvent, RfidSource } from "./modules/rfid/rfid.types.js";
+import { createSecurityService, type SecurityProfileInput, type VerifyInput } from "./modules/security/security.service.js";
 import { createSessionsService } from "./modules/sessions/sessions.service.js";
 import { createStationsService } from "./modules/stations/stations.service.js";
 import { createTagsService } from "./modules/tags/tags.service.js";
+import type { RegisterTagInput, TagObservationInput, TagStatus, TagTechnology } from "./modules/tags/tag.types.js";
 import { nowIso } from "./utils/time.js";
 
 const app = Fastify({ logger: true });
@@ -21,14 +22,21 @@ const db = createDb();
 const items = createItemsService(db);
 const tags = createTagsService(db);
 const sessions = createSessionsService(db);
-const rfid = createRfidService(db);
+const observations = createObservationsService(db);
+const security = createSecurityService(db);
 const stations = createStationsService(db);
 const reports = createReportsService(db);
 const admin = createAdminService(db);
 
 await app.register(cors, { origin: true });
 
-app.get("/api/health", async () => ({ ok: true, service: "storage-tags", time: nowIso() }));
+app.get("/api/health", async () => ({
+  ok: true,
+  service: "storage-tags",
+  version: "0.0.1",
+  time: nowIso(),
+  capabilities: ["uhf-rain", "nfc", "sun", "sdm", "tamper", "security-profiles", "reader-bridge"]
+}));
 
 app.get<{ Querystring: { search?: string } }>("/api/items", async (request) => items.list(request.query.search));
 app.get<{ Params: { id: string } }>("/api/items/:id", async (request, reply) => {
@@ -48,58 +56,72 @@ app.delete<{ Params: { id: string } }>("/api/items/:id", async (request, reply) 
   return items.remove(Number(request.params.id)) ? { ok: true } : reply.code(404).send({ ok: false, error: "ITEM_NOT_FOUND" });
 });
 
-app.get<{ Querystring: { status?: string } }>("/api/tags", async (request) => tags.list(request.query.status));
-app.get<{ Params: { epc: string } }>("/api/tags/:epc", async (request) => {
-  const tag = tags.resolve(request.params.epc);
+app.get("/api/tag-catalog", async () => tags.catalog());
+app.get<{ Querystring: { status?: string; technology?: TagTechnology; search?: string } }>("/api/tags", async (request) => tags.list(request.query));
+app.get<{ Params: { technology: TagTechnology; identifier: string } }>("/api/tags/:technology/:identifier", async (request) => {
+  const tag = tags.resolve(request.params.technology, request.params.identifier);
   return { ok: true, known: Boolean(tag), tag };
 });
-
-app.post<{ Body: { epc?: string; itemId?: number; tid?: string } }>("/api/tags/register", async (request, reply) => {
-  if (!request.body.epc || !request.body.itemId) return reply.code(400).send({ ok: false, error: "EPC_AND_ITEM_REQUIRED" });
-  const result = tags.register(request.body.epc, request.body.itemId, request.body.tid);
+app.post<{ Body: RegisterTagInput }>("/api/tags", async (request, reply) => {
+  if (!request.body.technology || !request.body.identifier) return reply.code(400).send({ ok: false, error: "TECHNOLOGY_AND_IDENTIFIER_REQUIRED" });
+  const result = tags.register(request.body);
   return result.ok ? result : reply.code(400).send(result);
 });
-app.put<{ Params: { epc: string }; Body: { status?: "active" | "inactive" | "ignored" | "external" } }>("/api/tags/:epc/status", async (request, reply) => {
+app.put<{ Params: { technology: TagTechnology; identifier: string }; Body: { status?: TagStatus } }>("/api/tags/:technology/:identifier/status", async (request, reply) => {
   if (!request.body.status) return reply.code(400).send({ ok: false, error: "STATUS_REQUIRED" });
-  const result = tags.setStatus(request.params.epc, request.body.status);
+  const result = tags.setStatus(request.params.technology, request.params.identifier, request.body.status);
   return result.ok ? result : reply.code(400).send(result);
 });
-app.post<{ Body: { epc?: string; status?: "ignored" | "external" } }>("/api/tags/mark-unknown", async (request, reply) => {
-  if (!request.body.epc || !request.body.status) return reply.code(400).send({ ok: false, error: "EPC_AND_STATUS_REQUIRED" });
-  const result = tags.markUnknown(request.body.epc, request.body.status);
+app.post<{ Body: { technology?: TagTechnology; identifier?: string; status?: "ignored" | "external" } }>("/api/tags/mark-unknown", async (request, reply) => {
+  if (!request.body.technology || !request.body.identifier || !request.body.status) return reply.code(400).send({ ok: false, error: "TECHNOLOGY_IDENTIFIER_AND_STATUS_REQUIRED" });
+  const result = tags.markUnknown(request.body.technology, request.body.identifier, request.body.status);
   return result.ok ? result : reply.code(400).send(result);
 });
 
-app.post<{ Body: Partial<RfidReadEvent> }>("/api/rfid/browser-read", async (request, reply) => {
+app.post<{ Body: TagObservationInput }>("/api/observations", async (request, reply) => {
+  if (!request.body.technology || !request.body.identifier || !request.body.source) return reply.code(400).send({ ok: false, error: "TECHNOLOGY_IDENTIFIER_AND_SOURCE_REQUIRED" });
+  const result = observations.process(request.body);
+  return result.ok ? result : reply.code(400).send(result);
+});
+app.post<{ Body: { observations?: TagObservationInput[] } }>("/api/observations/batch", async (request, reply) => {
+  if (!Array.isArray(request.body.observations)) return reply.code(400).send({ ok: false, error: "OBSERVATIONS_REQUIRED" });
+  return { ok: true, results: request.body.observations.map((entry) => observations.process(entry)) };
+});
+app.get<{ Querystring: { limit?: string } }>("/api/events", async (request) => observations.recentEvents(Number(request.query.limit ?? 100)));
+
+app.get("/api/security/profiles", async () => security.listProfiles());
+app.put<{ Params: { profileKey: string }; Body: Omit<SecurityProfileInput, "profileKey"> }>("/api/security/profiles/:profileKey", async (request, reply) => {
+  if (!request.body.name || !request.body.technology || !request.body.verifier) return reply.code(400).send({ ok: false, error: "PROFILE_FIELDS_REQUIRED" });
+  return { ok: true, profile: security.upsertProfile({ ...request.body, profileKey: request.params.profileKey }) };
+});
+app.post<{ Body: VerifyInput }>("/api/security/verify", async (request, reply) => {
+  if (!request.body.technology || !request.body.identifier) return reply.code(400).send({ ok: false, error: "TECHNOLOGY_AND_IDENTIFIER_REQUIRED" });
+  try {
+    const result = security.verify(request.body);
+    return result.ok ? result : reply.code(400).send(result);
+  } catch (error) {
+    request.log.error(error);
+    const message = error instanceof Error ? error.message : "VERIFICATION_ERROR";
+    return reply.code(400).send({ ok: false, error: message });
+  }
+});
+
+app.post<{ Body: { epc?: string; tid?: string; source?: string; stationId?: string; sessionId?: string; rssi?: number; antenna?: number; raw?: string; seenAt?: string } }>("/api/rfid/browser-read", async (request, reply) => {
   if (!request.body.epc) return reply.code(400).send({ ok: false, error: "EPC_REQUIRED" });
-  const event: RfidReadEvent = {
+  const result = observations.process({
+    technology: "uhf-rain",
+    identifier: request.body.epc,
     epc: request.body.epc,
     tid: request.body.tid,
-    source: (request.body.source ?? "browser-hid") as RfidSource,
-    stationId: request.body.stationId,
-    sessionId: request.body.sessionId,
-    deviceLabel: request.body.deviceLabel,
+    source: "browser-hid",
+    stationKey: request.body.stationId,
+    sessionKey: request.body.sessionId,
+    rssi: request.body.rssi,
+    antenna: request.body.antenna,
     raw: request.body.raw,
     seenAt: request.body.seenAt ?? nowIso()
-  };
-
-  const result = rfid.processRead(event);
-  return result.ok ? result : reply.code(400).send(result);
-});
-
-app.post<{ Body: { epcs?: string[]; source?: RfidSource; stationId?: string; sessionId?: string; deviceLabel?: string } }>("/api/rfid/batch-browser-read", async (request, reply) => {
-  if (!Array.isArray(request.body.epcs)) return reply.code(400).send({ ok: false, error: "EPCS_REQUIRED" });
-
-  const results = request.body.epcs.map((epc) => rfid.processRead({
-    epc,
-    source: request.body.source ?? "browser-hid",
-    stationId: request.body.stationId,
-    sessionId: request.body.sessionId,
-    deviceLabel: request.body.deviceLabel,
-    seenAt: nowIso()
-  }));
-
-  return { ok: true, results };
+  });
+  return result.ok ? { ...result, deprecatedRoute: true } : reply.code(400).send(result);
 });
 
 app.get("/api/inventory-sessions", async () => sessions.list());
@@ -118,7 +140,7 @@ app.get<{ Params: { stationKey: string } }>("/api/stations/:stationKey", async (
   const station = stations.get(request.params.stationKey);
   return station ? station : reply.code(404).send({ ok: false, error: "STATION_NOT_FOUND" });
 });
-app.put<{ Params: { stationKey: string }; Body: { name?: string; type?: string; inputMode?: string; deviceLabel?: string; config?: Record<string, unknown> } }>("/api/stations/:stationKey", async (request, reply) => {
+app.put<{ Params: { stationKey: string }; Body: { name?: string; type?: string; inputMode?: string; deviceLabel?: string; config?: Record<string, unknown> } }>("/api/stations/:stationKey", async (request) => {
   const stationKey = request.params.stationKey.trim();
   const name = request.body.name?.trim() || stationKey;
   return { ok: true, station: stations.upsert({ ...request.body, stationKey, name }) };
@@ -128,8 +150,10 @@ app.post<{ Body: { stationKey?: string; name?: string; type?: string; inputMode?
   return { ok: true, station: stations.upsert({ ...request.body, stationKey: request.body.stationKey.trim(), name: request.body.name?.trim() || request.body.stationKey.trim() }) };
 });
 
+app.get("/api/reports/dashboard", async () => reports.dashboardSummary());
 app.get("/api/reports/unknown-tags", async () => reports.unknownTags());
 app.get("/api/reports/items-last-seen", async () => reports.itemsLastSeen());
+app.get<{ Querystring: { limit?: string } }>("/api/reports/security-alerts", async (request) => reports.securityAlerts(Number(request.query.limit ?? 100)));
 app.post("/api/admin/backup", async () => ({ ok: true, backup: admin.backup() }));
 app.post("/api/admin/seed-demo", async () => ({ ok: true, ...admin.seedDemoData() }));
 
@@ -138,13 +162,17 @@ app.get<{ Params: { sessionKey: string } }>("/api/reports/session/:sessionKey/cs
   if (!session) return reply.code(404).send({ ok: false, error: "SESSION_NOT_FOUND" });
 
   const rows = [
-    ["EPC", "Item Name", "SKU", "Category", "Read Count", "First Seen", "Last Seen"],
+    ["Technology", "Identifier", "Item Name", "SKU", "Category", "Read Count", "Auth Status", "Current Tamper", "Permanent Tamper", "First Seen", "Last Seen"],
     ...session.reads.map((read: any) => [
-      read.epc,
+      read.technology,
+      read.identifier,
       read.item_name ?? "Unknown tag",
       read.item_sku ?? "",
       read.item_category ?? "",
       read.read_count,
+      read.auth_status,
+      read.tamper_status,
+      read.permanent_tamper_status,
       read.first_seen_at ?? "",
       read.last_seen_at ?? ""
     ])

@@ -15,14 +15,46 @@ CREATE TABLE IF NOT EXISTS items (
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS rfid_tags (
+CREATE TABLE IF NOT EXISTS tag_security_profiles (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  epc TEXT NOT NULL UNIQUE,
+  profile_key TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  technology TEXT NOT NULL,
+  verifier TEXT NOT NULL,
+  key_ref TEXT,
+  config_json TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  technology TEXT NOT NULL,
+  identifier TEXT NOT NULL,
+  epc TEXT,
   tid TEXT,
-  item_id INTEGER NOT NULL,
-  status TEXT DEFAULT 'active',
+  uid TEXT,
+  manufacturer TEXT,
+  chip_family TEXT,
+  chip_model TEXT,
+  product_family TEXT,
+  part_number TEXT,
+  capabilities_json TEXT,
+  metadata_json TEXT,
+  security_profile_id INTEGER,
+  item_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'active',
+  last_auth_status TEXT NOT NULL DEFAULT 'not-requested',
+  last_auth_counter INTEGER,
+  last_tamper_status TEXT NOT NULL DEFAULT 'unknown',
+  permanent_tamper_status TEXT NOT NULL DEFAULT 'unknown',
+  last_seen_at TEXT,
   registered_at TEXT DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (item_id) REFERENCES items(id)
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (security_profile_id) REFERENCES tag_security_profiles(id),
+  FOREIGN KEY (item_id) REFERENCES items(id),
+  UNIQUE(technology, identifier)
 );
 
 CREATE TABLE IF NOT EXISTS stations (
@@ -49,24 +81,59 @@ CREATE TABLE IF NOT EXISTS inventory_sessions (
   FOREIGN KEY (station_id) REFERENCES stations(id)
 );
 
-CREATE TABLE IF NOT EXISTS inventory_reads (
+CREATE TABLE IF NOT EXISTS inventory_observations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id INTEGER NOT NULL,
-  epc TEXT NOT NULL,
-  tid TEXT,
+  tag_id INTEGER,
+  technology TEXT NOT NULL,
+  identifier TEXT NOT NULL,
   source TEXT NOT NULL,
   rssi REAL,
   antenna INTEGER,
-  read_count INTEGER DEFAULT 1,
-  first_seen_at TEXT,
-  last_seen_at TEXT,
+  read_count INTEGER NOT NULL DEFAULT 1,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
   known_item_id INTEGER,
+  auth_status TEXT NOT NULL DEFAULT 'not-requested',
+  tamper_status TEXT NOT NULL DEFAULT 'unknown',
+  permanent_tamper_status TEXT NOT NULL DEFAULT 'unknown',
   FOREIGN KEY (session_id) REFERENCES inventory_sessions(id),
+  FOREIGN KEY (tag_id) REFERENCES tags(id),
   FOREIGN KEY (known_item_id) REFERENCES items(id),
-  UNIQUE(session_id, epc)
+  UNIQUE(session_id, technology, identifier)
+);
+
+CREATE TABLE IF NOT EXISTS tag_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_kind TEXT NOT NULL,
+  session_id INTEGER,
+  station_id INTEGER,
+  tag_id INTEGER,
+  technology TEXT NOT NULL,
+  identifier TEXT NOT NULL,
+  source TEXT NOT NULL,
+  auth_status TEXT NOT NULL DEFAULT 'not-requested',
+  auth_counter INTEGER,
+  tamper_status TEXT NOT NULL DEFAULT 'unknown',
+  permanent_tamper_status TEXT NOT NULL DEFAULT 'unknown',
+  sensor_value REAL,
+  sensor_unit TEXT,
+  payload_json TEXT,
+  raw TEXT,
+  occurred_at TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES inventory_sessions(id),
+  FOREIGN KEY (station_id) REFERENCES stations(id),
+  FOREIGN KEY (tag_id) REFERENCES tags(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_name ON items(name);
 CREATE INDEX IF NOT EXISTS idx_items_sku ON items(sku);
-CREATE INDEX IF NOT EXISTS idx_inventory_reads_session ON inventory_reads(session_id);
+CREATE INDEX IF NOT EXISTS idx_tags_item ON tags(item_id);
+CREATE INDEX IF NOT EXISTS idx_tags_identifier ON tags(technology, identifier);
+CREATE INDEX IF NOT EXISTS idx_tags_auth ON tags(last_auth_status);
+CREATE INDEX IF NOT EXISTS idx_tags_tamper ON tags(last_tamper_status, permanent_tamper_status);
+CREATE INDEX IF NOT EXISTS idx_inventory_observations_session ON inventory_observations(session_id);
+CREATE INDEX IF NOT EXISTS idx_tag_events_tag ON tag_events(tag_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tag_events_session ON tag_events(session_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tag_events_kind ON tag_events(event_kind, occurred_at DESC);
 `;

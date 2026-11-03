@@ -18,18 +18,43 @@ export function createItemsService(db: AppDb) {
       if (search) {
         const term = `%${search}%`;
         return db.prepare(`
-          SELECT * FROM items
-          WHERE (name LIKE ? OR sku LIKE ? OR category LIKE ?)
-            AND status != 'archived'
-          ORDER BY updated_at DESC, id DESC
+          SELECT
+            items.*,
+            COUNT(tags.id) AS tag_count,
+            SUM(CASE WHEN tags.technology = 'nfc' AND tags.status = 'active' THEN 1 ELSE 0 END) AS nfc_tag_count,
+            SUM(CASE WHEN tags.technology = 'uhf-rain' AND tags.status = 'active' THEN 1 ELSE 0 END) AS uhf_tag_count
+          FROM items
+          LEFT JOIN tags ON tags.item_id = items.id
+          WHERE (items.name LIKE ? OR items.sku LIKE ? OR items.category LIKE ?)
+            AND items.status != 'archived'
+          GROUP BY items.id
+          ORDER BY items.updated_at DESC, items.id DESC
         `).all(term, term, term);
       }
 
-      return db.prepare("SELECT * FROM items WHERE status != 'archived' ORDER BY updated_at DESC, id DESC").all();
+      return db.prepare(`
+        SELECT
+          items.*,
+          COUNT(tags.id) AS tag_count,
+          SUM(CASE WHEN tags.technology = 'nfc' AND tags.status = 'active' THEN 1 ELSE 0 END) AS nfc_tag_count,
+          SUM(CASE WHEN tags.technology = 'uhf-rain' AND tags.status = 'active' THEN 1 ELSE 0 END) AS uhf_tag_count
+        FROM items
+        LEFT JOIN tags ON tags.item_id = items.id
+        WHERE items.status != 'archived'
+        GROUP BY items.id
+        ORDER BY items.updated_at DESC, items.id DESC
+      `).all();
     },
 
     get(id: number) {
-      return db.prepare("SELECT * FROM items WHERE id = ?").get(id);
+      const item = db.prepare("SELECT * FROM items WHERE id = ?").get(id) as any;
+      if (!item) return null;
+      const tags = db.prepare(`
+        SELECT * FROM tags
+        WHERE item_id = ?
+        ORDER BY status = 'active' DESC, technology, registered_at DESC
+      `).all(id);
+      return { ...item, tags };
     },
 
     create(input: CreateItemInput) {
@@ -52,7 +77,7 @@ export function createItemsService(db: AppDb) {
     },
 
     update(id: number, input: UpdateItemInput) {
-      const existing = this.get(id) as {
+      const existing = db.prepare("SELECT * FROM items WHERE id = ?").get(id) as {
         sku: string | null;
         name: string;
         description: string | null;
@@ -64,14 +89,7 @@ export function createItemsService(db: AppDb) {
 
       db.prepare(`
         UPDATE items
-        SET
-          sku = ?,
-          name = ?,
-          description = ?,
-          category = ?,
-          photo_url = ?,
-          notes = ?,
-          updated_at = ?
+        SET sku = ?, name = ?, description = ?, category = ?, photo_url = ?, notes = ?, updated_at = ?
         WHERE id = ?
       `).run(
         input.sku ?? existing.sku ?? null,
@@ -88,10 +106,10 @@ export function createItemsService(db: AppDb) {
     },
 
     remove(id: number) {
-      const existing = this.get(id);
+      const existing = db.prepare("SELECT id FROM items WHERE id = ?").get(id);
       if (!existing) return false;
 
-      db.prepare("UPDATE rfid_tags SET status = 'inactive' WHERE item_id = ?").run(id);
+      db.prepare("UPDATE tags SET status = 'inactive', updated_at = ? WHERE item_id = ?").run(nowIso(), id);
       db.prepare("UPDATE items SET status = 'archived', updated_at = ? WHERE id = ?").run(nowIso(), id);
       return true;
     }
