@@ -7,13 +7,24 @@ export function resolveKeysDir() {
 
 export function loadAes128Key(keyRef: string) {
   if (!keyRef.trim()) throw new Error("KEY_REF_REQUIRED");
+  // Key references are file names, not paths. Never allow a profile to address
+  // arbitrary files outside the operator-managed secret directory.
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(keyRef) || keyRef === "." || keyRef === "..") {
+    throw new Error("INVALID_KEY_REF");
+  }
 
-  const base = resolveKeysDir();
-  const filePath = path.resolve(base, keyRef);
-  const relative = path.relative(base, filePath);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("INVALID_KEY_REF");
+  const filePath = path.join(resolveKeysDir(), keyRef);
+  // O_NOFOLLOW prevents the final path component from resolving through a
+  // symlink; fstat ensures the target is a regular file, not a device or pipe.
+  const descriptor = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  let data: Buffer;
+  try {
+    if (!fs.fstatSync(descriptor).isFile()) throw new Error("KEY_FILE_NOT_REGULAR");
+    data = fs.readFileSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
 
-  const data = fs.readFileSync(filePath);
   if (data.length === 16) return data;
 
   const text = data.toString("utf-8").trim().replace(/^0x/i, "").replace(/\s+/g, "");
